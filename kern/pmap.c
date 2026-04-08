@@ -26,7 +26,7 @@ void mips_detect_memory(u_int _memsize) {
 
 	/* Step 2: Calculate the corresponding 'npage' value. */
 	/* Exercise 2.1: Your code here. */
-	npage = memsize >> 12;
+	npage = memsize >> PGSHIFT;
 
 	printk("Memory size: %lu KiB, number of pages: %lu\n", memsize / 1024, npage);
 }
@@ -102,19 +102,18 @@ void page_init(void) {
 
 	/* Step 3: Mark all memory below `freemem` as used (set `pp_ref` to 1) */
 	/* Exercise 2.3: Your code here. (3/4) */
+	int size = PADDR(freemem) / PAGE_SIZE;
+	int i;
+	for (i = 0; i < size; ++i) {
+		pages[i].pp_ref = 1;
+	}
 
 	/* Step 4: Mark the other memory as free. */
 	/* Exercise 2.3: Your code here. (4/4) */
-	for (int i = 0; i < npage; i++) {
-		uintptr_t pa = page2pa(&pages[i]);
-		if(pa < freemem) {
-			pages[i].pp_ref = 1;
-		} else {
-			pages[i].pp_ref = 0;
-			LIST_INSERT_HEAD(&page_free_list, &pages[i], pp_link);
-		}
+	for (i = size; i < npage; ++i) {
+		pages[i].pp_ref = 0;
+		LIST_INSERT_HEAD(&page_free_list, pages + i, pp_link);
 	}
-
 }
 
 /* Overview:
