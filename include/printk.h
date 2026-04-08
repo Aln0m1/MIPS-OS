@@ -12,6 +12,15 @@ void _panic(const char *, int, const char *, const char *, ...)
 #endif
     ;
 
+
+
+int scank(const char *fmt, ...);
+
+
+
+
+
+
 #define panic(...) _panic(__FILE__, __LINE__, __func__, __VA_ARGS__)
 
 #define panic_on(expr)                                                                             \

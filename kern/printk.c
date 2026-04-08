@@ -30,3 +30,4 @@ void print_tf(struct Trapframe *tf) {
 	printk("CP0.Cause = %08x\n", tf->cp0_cause);
 	printk("CP0.EPC   = %08x\n", tf->cp0_epc);
 }
+
