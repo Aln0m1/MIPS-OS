@@ -5,6 +5,7 @@
 #include <pmap.h>
 #include <printk.h>
 #include <sched.h>
+#include <error.h>
 
 struct Env envs[NENV] __attribute__((aligned(PAGE_SIZE))); // All environments
 
@@ -184,6 +185,8 @@ static int env_setup_vm(struct Env *e) {
 	struct Page *p;
 	try(page_alloc(&p));
 	/* Exercise 3.3: Your code here. */
+	p->pp_ref++;
+	e->env_pgdir = (Pde *)page2kva(p);
 
 	/* Step 2: Copy the template page directory 'base_pgdir' to 'e->env_pgdir'. */
 	/* Hint:
@@ -224,9 +227,16 @@ int env_alloc(struct Env **new, u_int parent_id) {
 
 	/* Step 1: Get a free Env from 'env_free_list' */
 	/* Exercise 3.4: Your code here. (1/4) */
+	e = LIST_FIRST(&env_free_list);
+	if (e == NULL) {
+		return 0;
+	}
 
 	/* Step 2: Call a 'env_setup_vm' to initialize the user address space for this new Env. */
 	/* Exercise 3.4: Your code here. (2/4) */
+	if(env_setup_vm(e)) {
+		return env_setup_vm(e);
+	}
 
 	/* Step 3: Initialize these fields for the new Env with appropriate values:
 	 *   'env_user_tlb_mod_entry' (lab4), 'env_runs' (lab6), 'env_id' (lab3), 'env_asid' (lab3),
@@ -239,6 +249,11 @@ int env_alloc(struct Env **new, u_int parent_id) {
 	e->env_user_tlb_mod_entry = 0; // for lab4
 	e->env_runs = 0;	       // for lab6
 	/* Exercise 3.4: Your code here. (3/4) */
+	if ((r = asid_alloc(&e->env_asid)) != 0) {
+		return r;
+	}
+	e->env_asid = mkenvid(e);
+	e->env_parent_id = parent_id;
 
 	/* Step 4: Initialize the sp and 'cp0_status' in 'e->env_tf'.
 	 *   Set the EXL bit to ensure that the processor remains in kernel mode during context
@@ -251,6 +266,7 @@ int env_alloc(struct Env **new, u_int parent_id) {
 
 	/* Step 5: Remove the new Env from env_free_list. */
 	/* Exercise 3.4: Your code here. (4/4) */
+	LIST_REMOVE(e, env_link);
 
 	*new = e;
 	return 0;
