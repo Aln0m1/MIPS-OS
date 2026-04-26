@@ -5,7 +5,6 @@
 #include <pmap.h>
 #include <printk.h>
 #include <sched.h>
-#include <error.h>
 
 struct Env envs[NENV] __attribute__((aligned(PAGE_SIZE))); // All environments
 
@@ -235,13 +234,13 @@ int env_alloc(struct Env **new, u_int parent_id) {
 	/* Exercise 3.4: Your code here. (1/4) */
 	e = LIST_FIRST(&env_free_list);
 	if (e == NULL) {
-		return 0;
+		return -E_NO_FREE_ENV;
 	}
 
 	/* Step 2: Call a 'env_setup_vm' to initialize the user address space for this new Env. */
 	/* Exercise 3.4: Your code here. (2/4) */
-	if(env_setup_vm(e)) {
-		return env_setup_vm(e);
+	if ((r = env_setup_vm(e)) != 0) {
+		return r;
 	}
 
 	/* Step 3: Initialize these fields for the new Env with appropriate values:
@@ -258,7 +257,7 @@ int env_alloc(struct Env **new, u_int parent_id) {
 	if ((r = asid_alloc(&e->env_asid)) != 0) {
 		return r;
 	}
-	e->env_asid = mkenvid(e);
+	e->env_id = mkenvid(e);
 	e->env_parent_id = parent_id;
 
 	/* Step 4: Initialize the sp and 'cp0_status' in 'e->env_tf'.
