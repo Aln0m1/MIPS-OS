@@ -264,7 +264,7 @@ int sys_exofork(void) {
 
 	/* Step 4: Set up the new env's 'env_status' and 'env_pri'.  */
 	/* Exercise 4.9: Your code here. (4/4) */
-	e->env_status = ENV_RUNNABLE;
+	e->env_status = ENV_NOT_RUNNABLE;
 	e->env_pri = curenv->env_pri;
 
 	return e->env_id;
