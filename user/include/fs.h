@@ -34,6 +34,26 @@ struct File {
 	char f_pad[FILE_STRUCT_SIZE - MAXNAMELEN - (3 + NDIRECT) * 4 - sizeof(void *)];
 } __attribute__((aligned(4), packed));
 
+// lab5-extra
+#define FVERITY_MAGIC 0x56545931
+#define FVERITY_SEALED 0x1
+
+struct FileVerity {
+	uint32_t v_magic;  // verity 数据魔数
+	uint32_t v_flags;  // sealed 状态标记
+	uint32_t v_size;   // seal 时记录的文件大小
+	uint32_t v_digest; // seal 时记录的全文件摘要
+};
+
+static inline struct FileVerity *file_verity(struct File *f) {
+	return (struct FileVerity *)f->f_pad;
+}
+
+static inline int file_is_sealed(struct File *f) {
+	struct FileVerity *v = file_verity(f);
+	return v->v_magic == FVERITY_MAGIC && (v->v_flags & FVERITY_SEALED);
+}
+
 #define FILE2BLK (BLOCK_SIZE / sizeof(struct File))
 
 // File types
