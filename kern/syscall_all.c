@@ -60,7 +60,6 @@ void __attribute__((noreturn)) sys_yield(void) {
 	// Hint: Just use 'schedule' with 'yield' set.
 	/* Exercise 4.7: Your code here. */
 	schedule(1);
-
 }
 
 /* Overview:
@@ -101,6 +100,7 @@ int sys_set_tlb_mod_entry(u_int envid, u_int func) {
 
 	/* Step 2: Set its 'env_user_tlb_mod_entry' to 'func'. */
 	/* Exercise 4.12: Your code here. (2/2) */
+
 	env->env_user_tlb_mod_entry = func;
 
 	return 0;
@@ -142,6 +142,7 @@ int sys_mem_alloc(u_int envid, u_int va, u_int perm) {
 
 	/* Step 1: Check if 'va' is a legal user virtual address using 'is_illegal_va'. */
 	/* Exercise 4.4: Your code here. (1/3) */
+
 	if (is_illegal_va(va)) {
 		return -E_INVAL;
 	}
@@ -181,6 +182,7 @@ int sys_mem_map(u_int srcid, u_int srcva, u_int dstid, u_int dstva, u_int perm) 
 	/* Step 1: Check if 'srcva' and 'dstva' are legal user virtual addresses using
 	 * 'is_illegal_va'. */
 	/* Exercise 4.5: Your code here. (1/4) */
+
 	if (is_illegal_va(srcva) || is_illegal_va(dstva)) {
 		return -E_INVAL;
 	}
@@ -226,6 +228,7 @@ int sys_mem_unmap(u_int envid, u_int va) {
 
 	/* Step 2: Convert the envid to its corresponding 'struct Env *' using 'envid2env'. */
 	/* Exercise 4.6: Your code here. (2/2) */
+
 	try(envid2env(envid, &e, 1));
 
 	/* Step 3: Unmap the physical page at 'va' in the address space of 'envid'. */
@@ -256,14 +259,17 @@ int sys_exofork(void) {
 
 	/* Step 2: Copy the current Trapframe below 'KSTACKTOP' to the new env's 'env_tf'. */
 	/* Exercise 4.9: Your code here. (2/4) */
+
 	e->env_tf = *((struct Trapframe *)KSTACKTOP - 1);
 
 	/* Step 3: Set the new env's 'env_tf.regs[2]' to 0 to indicate the return value in child. */
 	/* Exercise 4.9: Your code here. (3/4) */
+
 	e->env_tf.regs[2] = 0;
 
 	/* Step 4: Set up the new env's 'env_status' and 'env_pri'.  */
 	/* Exercise 4.9: Your code here. (4/4) */
+
 	e->env_status = ENV_NOT_RUNNABLE;
 	e->env_pri = curenv->env_pri;
 
@@ -287,16 +293,19 @@ int sys_set_env_status(u_int envid, u_int status) {
 
 	/* Step 1: Check if 'status' is valid. */
 	/* Exercise 4.14: Your code here. (1/3) */
+
 	if (status != ENV_RUNNABLE && status != ENV_NOT_RUNNABLE) {
 		return -E_INVAL;
 	}
 
 	/* Step 2: Convert the envid to its corresponding 'struct Env *' using 'envid2env'. */
 	/* Exercise 4.14: Your code here. (2/3) */
+
 	try(envid2env(envid, &env, 1));
 
 	/* Step 3: Update 'env_sched_list' if the 'env_status' of 'env' is being changed. */
 	/* Exercise 4.14: Your code here. (3/3) */
+
 	if (status == ENV_RUNNABLE && env->env_status != ENV_RUNNABLE) {
 		TAILQ_INSERT_TAIL(&env_sched_list, env, env_sched_link);
 	} else if (status == ENV_NOT_RUNNABLE && env->env_status != ENV_NOT_RUNNABLE) {
@@ -366,15 +375,18 @@ int sys_ipc_recv(u_int dstva) {
 
 	/* Step 2: Set 'curenv->env_ipc_recving' to 1. */
 	/* Exercise 4.8: Your code here. (1/8) */
+
 	curenv->env_ipc_recving = 1;
 
 	/* Step 3: Set the value of 'curenv->env_ipc_dstva'. */
 	/* Exercise 4.8: Your code here. (2/8) */
+
 	curenv->env_ipc_dstva = dstva;
 
 	/* Step 4: Set the status of 'curenv' to 'ENV_NOT_RUNNABLE' and remove it from
 	 * 'env_sched_list'. */
 	/* Exercise 4.8: Your code here. (3/8) */
+
 	curenv->env_status = ENV_NOT_RUNNABLE;
 	TAILQ_REMOVE(&env_sched_list, curenv, env_sched_link);
 
@@ -405,6 +417,7 @@ int sys_ipc_try_send(u_int envid, u_int value, u_int srcva, u_int perm) {
 
 	/* Step 1: Check if 'srcva' is either zero or a legal address. */
 	/* Exercise 4.8: Your code here. (4/8) */
+
 	if (srcva != 0 && is_illegal_va(srcva)) {
 		return -E_INVAL;
 	}
@@ -504,7 +517,6 @@ static inline int is_illegal_dev_range(u_long pa, u_long len) {
 	}
 	return 1;
 }
-
 int sys_write_dev(u_int va, u_int pa, u_int len) {
 	/* Exercise 5.1: Your code here. (1/2) */
 	if (is_illegal_va_range(va, len) || is_illegal_dev_range(pa, len) || va % len != 0) {
@@ -599,6 +611,7 @@ void do_syscall(struct Trapframe *tf) {
 
 	/* Step 2: Use 'sysno' to get 'func' from 'syscall_table'. */
 	/* Exercise 4.2: Your code here. (2/4) */
+
 	func = syscall_table[sysno];
 
 	/* Step 3: First 3 args are stored in $a1, $a2, $a3. */
@@ -609,12 +622,13 @@ void do_syscall(struct Trapframe *tf) {
 	/* Step 4: Last 2 args are stored in stack at [$sp + 16 bytes], [$sp + 20 bytes]. */
 	u_int arg4, arg5;
 	/* Exercise 4.2: Your code here. (3/4) */
+
 	arg4 = *((u_int *)tf->regs[29] + 4);
 	arg5 = *((u_int *)tf->regs[29] + 5);
 
 	/* Step 5: Invoke 'func' with retrieved arguments and store its return value to $v0 in 'tf'.
 	 */
 	/* Exercise 4.2: Your code here. (4/4) */
-	tf->regs[2] = func(arg1, arg2, arg3, arg4, arg5);
 
+	tf->regs[2] = func(arg1, arg2, arg3, arg4, arg5);
 }

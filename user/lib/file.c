@@ -58,6 +58,7 @@ int open(const char *path, int mode) {
 	// Step 4: Map the file content using 'fsipc_map'.
 	for (int i = 0; i < size; i += PTMAP) {
 		/* Exercise 5.9: Your code here. (4/5) */
+
 		r = fsipc_map(fileid, i, va + i);
 		if (r) {
 			return r;
@@ -66,6 +67,8 @@ int open(const char *path, int mode) {
 
 	// Step 5: Return the number of file descriptor using 'fd2num'.
 	/* Exercise 5.9: Your code here. (5/5) */
+	// if (mode & O_APPND)
+	// 	seek(fdnum, size);
 	return fd2num(fd);
 }
 
@@ -261,6 +264,7 @@ int remove(const char *path) {
 	// Call fsipc_remove.
 
 	/* Exercise 5.13: Your code here. */
+
 	return fsipc_remove(path);
 }
 

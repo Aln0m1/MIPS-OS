@@ -166,6 +166,7 @@ void unmap_block(u_int blockno) {
 	// first.
 	// Hint: Use 'block_is_free', 'block_is_dirty' to check, and 'write_block' to sync.
 	/* Exercise 5.7: Your code here. (4/5) */
+
 	if (!block_is_free(blockno) && block_is_dirty(blockno)) {
 		write_block(blockno);
 	}
@@ -200,6 +201,7 @@ void free_block(u_int blockno) {
 	// You can refer to the function 'block_is_free' above.
 	// Step 1: If 'blockno' is invalid (0 or >= the number of blocks in 'super'), return.
 	/* Exercise 5.4: Your code here. (1/2) */
+
 	if (blockno == 0 || blockno >= super->s_nblocks) {
 		return;
 	}
@@ -207,6 +209,7 @@ void free_block(u_int blockno) {
 	// Step 2: Set the flag bit of 'blockno' in 'bitmap'.
 	// Hint: Use bit operations to update the bitmap, such as b[n / W] |= 1 << (n % W).
 	/* Exercise 5.4: Your code here. (2/2) */
+
 	bitmap[blockno / 32] |= 1 << (blockno & 0x1f);
 
 	write_block(blockno / BLOCK_SIZE_BIT + 2);
@@ -536,6 +539,7 @@ int dir_lookup(struct File *dir, char *name, struct File **file) {
 	// Step 1: Calculate the number of blocks in 'dir' via its size.
 	u_int nblock;
 	/* Exercise 5.8: Your code here. (1/3) */
+
 	nblock = dir->f_size / BLOCK_SIZE;
 
 	// Step 2: Iterate through all blocks in the directory.
@@ -543,6 +547,7 @@ int dir_lookup(struct File *dir, char *name, struct File **file) {
 		// Read the i'th block of 'dir' and get its address in 'blk' using 'file_get_block'.
 		void *blk;
 		/* Exercise 5.8: Your code here. (2/3) */
+
 		try(file_get_block(dir, i, &blk));
 		struct File *files = (struct File *)blk;
 

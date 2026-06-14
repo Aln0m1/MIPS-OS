@@ -32,15 +32,18 @@ static void __attribute__((noreturn)) cow_entry(struct Trapframe *tf) {
 
 	/* Step 3: Allocate a new page at 'UCOW'. */
 	/* Exercise 4.13: Your code here. (3/6) */
+
 	syscall_mem_alloc(0, (void *)UCOW, perm);
 
 	/* Step 4: Copy the content of the faulting page at 'va' to 'UCOW'. */
 	/* Hint: 'va' may not be aligned to a page! */
 	/* Exercise 4.13: Your code here. (4/6) */
+
 	memcpy((void *)UCOW, (void *)ROUNDDOWN(va, PAGE_SIZE), PAGE_SIZE);
 
 	// Step 5: Map the page at 'UCOW' to 'va' with the new 'perm'.
 	/* Exercise 4.13: Your code here. (5/6) */
+
 	syscall_mem_map(0, (void *)UCOW, 0, (void *)va, perm);
 
 	// Step 6: Unmap the page at 'UCOW'.
@@ -81,6 +84,7 @@ static void duppage(u_int envid, u_int vpn) {
 	/* Step 1: Get the permission of the page. */
 	/* Hint: Use 'vpt' to find the page table entry. */
 	/* Exercise 4.10: Your code here. (1/2) */
+
 	addr = vpn << PGSHIFT;
 	perm = vpt[vpn] & ((1 << PGSHIFT) - 1);
 
@@ -94,10 +98,12 @@ static void duppage(u_int envid, u_int vpn) {
 			user_panic("user panic mem map error: %d", r);
 		}
 	} else {
-		if ((r = syscall_mem_map(0, (void *)addr, envid, (void *)addr, (perm & ~PTE_D) | PTE_COW)) < 0) {
+		if ((r = syscall_mem_map(0, (void *)addr, envid, (void *)addr,
+					 (perm & ~PTE_D) | PTE_COW)) < 0) {
 			user_panic("user panic mem map error: %d", r);
 		}
-		if ((r = syscall_mem_map(0, (void *)addr, 0, (void *)addr, (perm & ~PTE_D) | PTE_COW)) < 0) {
+		if ((r = syscall_mem_map(0, (void *)addr, 0, (void *)addr,
+					 (perm & ~PTE_D) | PTE_COW)) < 0) {
 			user_panic("user panic mem map error: %d", r);
 		}
 	}

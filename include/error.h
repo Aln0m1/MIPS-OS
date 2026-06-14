@@ -44,13 +44,6 @@
 // File not a valid executable
 #define E_NOT_EXEC 13
 
-// lab5-extra
-// Verity digest mismatch on a sealed file
-#define E_VERIFY 14
-
-// Attempt to write to a sealed file
-#define E_SEALED 15
-
 /*
  * A quick wrapper around function calls to propagate errors.
  * Use this with caution, as it leaks resources we've acquired so far.

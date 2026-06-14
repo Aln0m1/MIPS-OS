@@ -94,10 +94,12 @@ void page_init(void) {
 	/* Step 1: Initialize page_free_list. */
 	/* Hint: Use macro `LIST_INIT` defined in include/queue.h. */
 	/* Exercise 2.3: Your code here. (1/4) */
+
 	LIST_INIT(&page_free_list);
 
 	/* Step 2: Align `freemem` up to multiple of PAGE_SIZE. */
 	/* Exercise 2.3: Your code here. (2/4) */
+
 	freemem = ROUND(freemem, PAGE_SIZE);
 
 	/* Step 3: Mark all memory below `freemem` as used (set `pp_ref` to 1) */
@@ -133,8 +135,9 @@ int page_alloc(struct Page **new) {
 	/* Step 1: Get a page from free memory. If fails, return the error code.*/
 	struct Page *pp;
 	/* Exercise 2.4: Your code here. (1/2) */
+
 	pp = LIST_FIRST(&page_free_list);
-	if(pp == NULL) {
+	if (pp == NULL) {
 		return -E_NO_MEM;
 	}
 
@@ -143,7 +146,8 @@ int page_alloc(struct Page **new) {
 	/* Step 2: Initialize this page with zero.
 	 * Hint: use `memset`. */
 	/* Exercise 2.4: Your code here. (2/2) */
-	memset((void *)page2kva(pp), 0, PAGE_SIZE);
+
+	memset((void *)page2kva(pp), 0, PAGE_SIZE); // memset requests virtual address!!!!
 
 	*new = pp;
 	return 0;
@@ -160,7 +164,6 @@ void page_free(struct Page *pp) {
 	/* Just insert it into 'page_free_list'. */
 	/* Exercise 2.5: Your code here. */
 	LIST_INSERT_HEAD(&page_free_list, pp, pp_link);
-
 }
 
 /* Overview:
@@ -186,6 +189,7 @@ static int pgdir_walk(Pde *pgdir, u_long va, int create, Pte **ppte) {
 
 	/* Step 1: Get the corresponding page directory entry. */
 	/* Exercise 2.6: Your code here. (1/3) */
+
 	pgdir_entryp = pgdir + PDX(va);
 
 	/* Step 2: If the corresponding page table is not existent (valid) then:
@@ -195,6 +199,7 @@ static int pgdir_walk(Pde *pgdir, u_long va, int create, Pte **ppte) {
 	 *   * Otherwise, assign NULL to '*ppte' and return 0.
 	 */
 	/* Exercise 2.6: Your code here. (2/3) */
+
 	if (!((*pgdir_entryp) & PTE_V)) {
 		if (create) {
 			try(page_alloc(&pp));
@@ -244,6 +249,7 @@ int page_insert(Pde *pgdir, u_int asid, struct Page *pp, u_long va, u_int perm) 
 
 	/* Step 2: Flush TLB with 'tlb_invalidate'. */
 	/* Exercise 2.7: Your code here. (1/3) */
+
 	tlb_invalidate(asid, va);
 
 	/* Step 3: Re-get or create the page table entry. */

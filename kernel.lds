@@ -10,11 +10,12 @@ ENTRY(_start)
 
 SECTIONS {
 	/* Exercise 3.10: Your code here. */
+
 	. = 0x80000000;
 	.tlb_miss_entry : {
 		*(.text.tlb_miss_entry)
 	}
-	
+
 	. = 0x80000180;
 	.exc_gen_entry : {
 		*(.text.exc_gen_entry)
@@ -31,16 +32,23 @@ SECTIONS {
 
 	/* Step 2: Define the text section. */
 	/* Exercise 1.2: Your code here. (2/4) */
-	.text : { *(.text) }
+
+	.text : {
+		*(.text)
+	}
 
 	/* Step 3: Define the data section. */
 	/* Exercise 1.2: Your code here. (3/4) */
-	.data : { *(.data) }
+	.data : {
+		*(.data)
+	}
 
 	bss_start = .;
 	/* Step 4: Define the bss section. */
 	/* Exercise 1.2: Your code here. (4/4) */
-	.bss : { *(.bss) }
+	.bss  : {
+		*(.bss)
+	}
 
 	bss_end = .;
 	. = 0x80400000;
