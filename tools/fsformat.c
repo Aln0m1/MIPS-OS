@@ -249,7 +249,6 @@ struct File *create_file(struct File *dirf) {
 	/* Exercise 5.5: Your code here. (3/3) */
 	int bno = make_link_block(dirf, nblk);
 	return (struct File *)(disk[bno].data);
-	return NULL;
 }
 
 // Find directory's position in its parent and set as target's dir info

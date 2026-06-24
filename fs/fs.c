@@ -21,6 +21,24 @@ static void *block_to_cache[MAX_DISK_BLOCKS];
 // Inverse mapping from cache virtual address to disk block number
 static uint32_t cache_to_block[PAGES_IN_CACHE];
 
+// Forward declarations
+static void *alloc_cache_page(void);
+static void free_cache_page(void *va);
+static void init_cache_bitmap(void);
+void *disk_addr(u_int blockno);
+int va_is_mapped(void *va);
+void *block_is_mapped(u_int blockno);
+int va_is_dirty(void *va);
+int block_is_dirty(u_int blockno);
+int dirty_block(u_int blockno);
+void write_block(u_int blockno);
+int read_block(u_int blockno, void **blk, u_int *isnew);
+int map_block(u_int blockno);
+void unmap_block(u_int blockno);
+struct File *get_dir_fcb(uint32_t block, uint32_t offset);
+void set_dir_info(struct File *f, struct File *dir);
+void find_file_pos(struct File *dir, struct File *f, uint32_t *diskbno_out, uint32_t *offset_out);
+
 // Helper function: Allocate a cache page, returns virtual address or NULL
 static void *alloc_cache_page(void) {
 	// Find first free page (lowest address first)
@@ -60,7 +78,7 @@ static void init_cache_bitmap(void) {
 		block_to_cache[i] = NULL;
 	}
 	for (int i = 0; i < PAGES_IN_CACHE; i++) {
-		cache_to_block[i] = -1; // Invalid block number
+		cache_to_block[i] = (uint32_t)-1; // Invalid block number
 	}
 }
 
@@ -69,12 +87,13 @@ struct File *get_dir_fcb(uint32_t block, uint32_t offset) {
     if (block == 0) {
         return NULL;
     }
-    void *va = disk_addr(block);
-    if (!va_is_mapped(va)) {
+    // Check if block is mapped
+    void *va = block_is_mapped(block);
+    if (va == NULL) {
         if (read_block(block, NULL, NULL) < 0) {
             return NULL;
         }
-        va = disk_addr(block);
+        va = block_is_mapped(block);
     }
     return (struct File *)((char *)va + offset);
 }
@@ -177,16 +196,18 @@ int va_is_dirty(void *va) {
 // Overview:
 //  Check if this block is dirty. (check corresponding `va`)
 int block_is_dirty(u_int blockno) {
-	void *va = disk_addr(blockno);
+	void *va = block_is_mapped(blockno);
+	if (va == NULL) {
+		return 0;
+	}
 	return va_is_dirty(va);
 }
 
 // Overview:
 //  Mark this block as dirty (cache page has changed and needs to be written back to disk).
 int dirty_block(u_int blockno) {
-	void *va = disk_addr(blockno);
-
-	if (!va_is_mapped(va)) {
+	void *va = block_is_mapped(blockno);
+	if (va == NULL) {
 		return -E_NOT_FOUND;
 	}
 
@@ -551,8 +572,8 @@ void dirty_fcb(struct File *f) {
 					debugf("dirty_fcb: file_map_block failed\n");
 					break;
 				}
-				files = disk_addr(diskbno);
-				if (files <= f && f < files + FILE2BLK) {
+				files = block_is_mapped(diskbno);
+				if (files && files <= f && f < files + FILE2BLK) {
 					dirty_block(diskbno);
 					break;
 				}
