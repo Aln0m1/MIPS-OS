@@ -244,7 +244,6 @@ int readn(int fdnum, void *buf, u_int n) {
 	return tot;
 }
 
-/* Lab 5 Key Code "write" */
 int write(int fdnum, const void *buf, u_int n) {
 	int r;
 	struct Dev *dev;
@@ -265,9 +264,7 @@ int write(int fdnum, const void *buf, u_int n) {
 
 	return r;
 }
-/* End of Key Code "write" */
 
-/* Lab 5 Key Code "seek" */
 int seek(int fdnum, u_int offset) {
 	int r;
 	struct Fd *fd;
@@ -279,7 +276,6 @@ int seek(int fdnum, u_int offset) {
 	fd->fd_offset = offset;
 	return 0;
 }
-/* End of Key Code "seek" */
 
 int fstat(int fdnum, struct Stat *stat) {
 	int r;

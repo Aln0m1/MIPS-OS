@@ -26,7 +26,6 @@ static int fsipc(u_int type, void *fsreq, void *dstva, u_int *perm) {
 	return ipc_recv(&whom, dstva, perm);
 }
 
-/* Lab 5 Key Code "fsipc-open" */
 // Overview:
 //  Send file-open request to the file server. Includes path and
 //  omode in request, sets *fileid and *size from reply.
@@ -49,7 +48,6 @@ int fsipc_open(const char *path, u_int omode, struct Fd *fd) {
 	req->req_omode = omode;
 	return fsipc(FSREQ_OPEN, req, fd, &perm);
 }
-/* End of Key Code "fsipc-open" */
 
 // Overview:
 //  Make a map-block request to the file server. We send the fileid and

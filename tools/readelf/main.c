@@ -42,7 +42,7 @@ int main(int argc, char *argv[]) {
 		perror("fseek");
 		goto err;
 	}
-	if (fread(p, fsize, 1, fp) != 1) {
+	if (fread(p, fsize, 1, fp) < 0) {
 		perror("fread");
 		goto err;
 	}

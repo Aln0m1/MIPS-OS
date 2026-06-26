@@ -30,9 +30,9 @@ struct File {
 	uint32_t f_direct[NDIRECT];
 	uint32_t f_indirect;
 
-	uint32_t f_dir_block; // the disk block number of the directory where this file is in
-	uint32_t f_dir_offset; // the offset within the disk block where this file's directory FCB is
-	char f_pad[FILE_STRUCT_SIZE - MAXNAMELEN - (4 + NDIRECT) * 4];
+	uint32_t f_dir_block;	// disk block of parent directory FCB
+	uint32_t f_dir_offset;	// byte offset of parent directory FCB in block
+	char f_pad[FILE_STRUCT_SIZE - MAXNAMELEN - (3 + NDIRECT) * 4 - 8];
 } __attribute__((aligned(4), packed));
 
 #define FILE2BLK (BLOCK_SIZE / sizeof(struct File))

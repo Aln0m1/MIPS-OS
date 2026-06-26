@@ -2,6 +2,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <libgen.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,7 +106,6 @@ void reverse_block(struct Block *b) {
 	}
 }
 
-/* Lab 5 Key Code "init-disk" */
 // Initial the disk. Do some work with bitmap and super block.
 void init_disk() {
 	int i, diff;
@@ -135,11 +135,28 @@ void init_disk() {
 	super.s_nblocks = NBLOCK;
 	super.s_root.f_type = FTYPE_DIR;
 	strcpy(super.s_root.f_name, "/");
-	// Root directory references itself as its directory
-	super.s_root.f_dir_block = 1;
-	super.s_root.f_dir_offset = offsetof(struct Super, s_root);
+	super.s_root.f_dir_block = 0;
+	super.s_root.f_dir_offset = 0;
 }
-/* End of Key Code "init-disk" */
+
+static void file_set_parent(struct File *child, struct File *dir) {
+	if (dir == &super.s_root) {
+		child->f_dir_block = 1;
+		child->f_dir_offset = offsetof(struct Super, s_root);
+		return;
+	}
+
+	for (int i = 0; i < nextbno; ++i) {
+		if ((char *)dir >= (char *)disk[i].data &&
+		    (char *)dir < (char *)disk[i].data + BLOCK_SIZE) {
+			child->f_dir_block = i;
+			child->f_dir_offset = (uint32_t)((char *)dir - (char *)disk[i].data);
+			return;
+		}
+	}
+	child->f_dir_block = 0;
+	child->f_dir_offset = 0;
+}
 
 // Get next block id, and set `type` to the block's type.
 int next_block(int type) {
@@ -249,41 +266,14 @@ struct File *create_file(struct File *dirf) {
 	/* Exercise 5.5: Your code here. (3/3) */
 	int bno = make_link_block(dirf, nblk);
 	return (struct File *)(disk[bno].data);
-}
-
-// Find directory's position in its parent and set as target's dir info
-void set_file_dir_info(struct File *dirf, struct File *target) {
-	// Find dirf's position in its parent directory first
-	if (dirf == &super.s_root) {
-		// Root dir
-		target->f_dir_block = 1;
-		target->f_dir_offset = offsetof(struct Super, s_root);
-		return;
-	}
-	// Need to find dirf in its parent directory
-	// But we don't have parent dir info here, so let's find dirf's position in disk
-	// Search all BLOCK_FILE blocks for dirf
-	for (int bno = 2 + nbitblock; bno < nextbno; bno++) {
-		if (disk[bno].type == BLOCK_FILE) {
-			struct File *files = (struct File *)disk[bno].data;
-			for (int i = 0; i < FILE2BLK; i++) {
-				if (&files[i] == dirf) {
-					target->f_dir_block = bno;
-					target->f_dir_offset = i * sizeof(struct File);
-					return;
-				}
-			}
-		}
-	}
-	// Fallback
-	target->f_dir_block = 0;
-	target->f_dir_offset = 0;
+	return NULL;
 }
 
 // Write file to disk under specified dir.
 void write_file(struct File *dirf, const char *path) {
 	int iblk = 0, r = 0, n = sizeof(disk[0].data);
 	struct File *target = create_file(dirf);
+	file_set_parent(target, dirf);
 
 	/* in case `create_file` is't filled */
 	if (target == NULL) {
@@ -304,9 +294,6 @@ void write_file(struct File *dirf, const char *path) {
 	target->f_size = lseek(fd, 0, SEEK_END);
 	target->f_type = FTYPE_REG;
 
-	// Set dir info
-	set_file_dir_info(dirf, target);
-
 	// Start reading file.
 	lseek(fd, 0, SEEK_SET);
 	while ((r = read(fd, disk[nextbno].data, n)) > 0) {
@@ -315,7 +302,6 @@ void write_file(struct File *dirf, const char *path) {
 	close(fd); // Close file descriptor.
 }
 
-/* Lab 5 Key Code "write-directory" */
 // Overview:
 //  Write directory to disk under specified dir.
 //  Notice that we may use POSIX library functions to operate on
@@ -330,6 +316,7 @@ void write_directory(struct File *dirf, char *path) {
 		return;
 	}
 	struct File *pdir = create_file(dirf);
+	file_set_parent(pdir, dirf);
 	strncpy(pdir->f_name, basename(path), MAXNAMELEN - 1);
 	if (pdir->f_name[MAXNAMELEN - 1] != 0) {
 		fprintf(stderr, "file name is too long: %s\n", path);
@@ -337,8 +324,6 @@ void write_directory(struct File *dirf, char *path) {
 		exit(1);
 	}
 	pdir->f_type = FTYPE_DIR;
-	// Set dir info for the new directory
-	set_file_dir_info(dirf, pdir);
 	for (struct dirent *e; (e = readdir(dir)) != NULL;) {
 		if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0) {
 			char *buf = malloc(strlen(path) + strlen(e->d_name) + 2);
@@ -353,7 +338,6 @@ void write_directory(struct File *dirf, char *path) {
 	}
 	closedir(dir);
 }
-/* End of Key Code "write-directory" */
 
 int main(int argc, char **argv) {
 	static_assert(sizeof(struct File) == FILE_STRUCT_SIZE);

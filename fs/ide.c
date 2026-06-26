@@ -7,7 +7,6 @@
 #include <malta.h>
 #include <mmu.h>
 
-/* Lab 5 Key Code "wait-ide-ready" */
 /* Overview:
  *   Wait for the IDE device to complete previous requests and be ready
  *   to receive subsequent requests.
@@ -23,7 +22,6 @@ static uint8_t wait_ide_ready() {
 	}
 	return flag;
 }
-/* End of Key Code "wait-ide-ready" */
 
 /* Overview:
  *  read data from IDE disk. First issue a read request through

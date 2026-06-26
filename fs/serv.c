@@ -10,31 +10,19 @@
 #include <mmu.h>
 /*
  * Fields
- * o_file: mapped descriptor for open file (may need refresh)
+ * o_file: mapped descriptor for open file
  * o_fileid: file id
  * o_mode: open mode
  * o_ff: va of filefd page
  */
 struct Open {
 	struct File *o_file;
+	u_int o_file_block;
+	u_int o_file_offset;
 	u_int o_fileid;
 	int o_mode;
 	struct Filefd *o_ff;
 };
-
-// Helper function to refresh the open file pointer if needed
-// Since cache addresses can change, we can store the path and reopen,
-// but for simplicity, we'll store the File struct in o_ff and use that
-// Alternatively, we could store the file's position information
-struct File *refresh_open_file(struct Open *o) {
-	// The Filefd structure has a copy of the File struct
-	// But we need the actual pointer from the cache
-	// For now, assume o_file is valid, but in a real system we'd need more
-	// Since we modified file_close to unmap directory blocks too,
-	// we need to ensure the directory is loaded again
-	// For this challenge, let's just return o_file but add a note
-	return o->o_file;
-}
 
 /*
  * Max number of open files in the file system at once
@@ -130,6 +118,14 @@ int open_lookup(u_int envid, u_int fileid, struct Open **po) {
 	*po = o;
 	return 0;
 }
+
+static void open_refresh_file(struct Open *o) {
+	struct File *f;
+
+	if (file_get_by_loc(o->o_file_block, o->o_file_offset, &f) == 0) {
+		o->o_file = f;
+	}
+}
 /*
  * Functions with the prefix "serve_" are those who
  * conduct the file system requests from clients.
@@ -140,7 +136,6 @@ int open_lookup(u_int envid, u_int fileid, struct Open **po) {
  * `ipc_send`.
  */
 
-/* Lab 5 Key Code "serve-open" */
 /*
  * Overview:
  * Serve to open a file specified by the path in `rq`.
@@ -181,12 +176,15 @@ void serve_open(u_int envid, struct Fsreq_open *rq) {
 
 	// Save the file pointer.
 	o->o_file = f;
+	if (file_fcb_location(f, &o->o_file_block, &o->o_file_offset) < 0) {
+		o->o_file_block = 0;
+		o->o_file_offset = 0;
+	}
 
 	// If mode include O_TRUNC, set the file size to 0
 	if (rq->req_omode & O_TRUNC) {
 		if ((r = file_set_size(f, 0)) < 0) {
 			ipc_send(envid, r, 0, 0);
-			return;
 		}
 	}
 
@@ -199,7 +197,6 @@ void serve_open(u_int envid, struct Fsreq_open *rq) {
 	ff->f_fd.fd_dev_id = devfile.dev_id;
 	ipc_send(envid, 0, o->o_ff, PTE_D | PTE_LIBRARY);
 }
-/* End of Key Code "serve-open" */
 
 /*
  * Overview:
@@ -224,6 +221,7 @@ void serve_map(u_int envid, struct Fsreq_map *rq) {
 		ipc_send(envid, r, 0, 0);
 		return;
 	}
+	open_refresh_file(pOpen);
 
 	filebno = rq->req_offset / BLOCK_SIZE;
 
@@ -254,6 +252,7 @@ void serve_set_size(u_int envid, struct Fsreq_set_size *rq) {
 		ipc_send(envid, r, 0, 0);
 		return;
 	}
+	open_refresh_file(pOpen);
 
 	if ((r = file_set_size(pOpen->o_file, rq->req_size)) < 0) {
 		ipc_send(envid, r, 0, 0);
@@ -284,6 +283,7 @@ void serve_close(u_int envid, struct Fsreq_close *rq) {
 		ipc_send(envid, r, 0, 0);
 		return;
 	}
+	open_refresh_file(pOpen);
 
 	file_close(pOpen->o_file);
 	ipc_send(envid, 0, 0, 0);
@@ -331,6 +331,7 @@ void serve_dirty(u_int envid, struct Fsreq_dirty *rq) {
 		ipc_send(envid, r, 0, 0);
 		return;
 	}
+	open_refresh_file(pOpen);
 
 	if ((r = file_dirty(pOpen->o_file, rq->req_offset)) < 0) {
 		ipc_send(envid, r, 0, 0);

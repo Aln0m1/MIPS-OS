@@ -1,179 +1,96 @@
 #include "serv.h"
 #include <mmu.h>
+#include <stddef.h>
 
 struct Super *super;
 
 uint32_t *bitmap;
 
-// Task 4: Dynamic cache address allocation
-#define CACHE_START 0x10000000
-#define CACHE_END 0x50000000
-#define CACHE_SIZE (CACHE_END - CACHE_START)
-#define PAGES_IN_CACHE (CACHE_SIZE / PAGE_SIZE)
+#define ROOT_DIR_BLOCK 1
+#define ROOT_DIR_OFFSET ((u_int)offsetof(struct Super, s_root))
+#define NCACHE_PAGES ((CACHE_LIMIT - CACHE_BASE) / PAGE_SIZE)
+#define MAX_DISK_BLOCKS (DISKMAX / BLOCK_SIZE)
 
-// Bitmap for free cache pages (1 = free, 0 = used)
-static uint8_t cache_page_bitmap[PAGES_IN_CACHE / 8 + 1];
-
-// Mapping from disk block number to cache virtual address
-#define MAX_DISK_BLOCKS 1024
-static void *block_to_cache[MAX_DISK_BLOCKS];
-
-// Inverse mapping from cache virtual address to disk block number
-static uint32_t cache_to_block[PAGES_IN_CACHE];
-
-// Forward declarations
-static void *alloc_cache_page(void);
-static void free_cache_page(void *va);
-static void init_cache_bitmap(void);
-void *disk_addr(u_int blockno);
-int va_is_mapped(void *va);
-void *block_is_mapped(u_int blockno);
-int va_is_dirty(void *va);
-int block_is_dirty(u_int blockno);
-int dirty_block(u_int blockno);
-void write_block(u_int blockno);
-int read_block(u_int blockno, void **blk, u_int *isnew);
-int map_block(u_int blockno);
-void unmap_block(u_int blockno);
-struct File *get_dir_fcb(uint32_t block, uint32_t offset);
-void set_dir_info(struct File *f, struct File *dir);
-void find_file_pos(struct File *dir, struct File *f, uint32_t *diskbno_out, uint32_t *offset_out);
-
-// Helper function: Allocate a cache page, returns virtual address or NULL
-static void *alloc_cache_page(void) {
-	// Find first free page (lowest address first)
-	for (int i = 0; i < PAGES_IN_CACHE; i++) {
-		int byte_idx = i / 8;
-		int bit_idx = i % 8;
-		if (cache_page_bitmap[byte_idx] & (1 << bit_idx)) {
-			// Mark as used
-			cache_page_bitmap[byte_idx] &= ~(1 << bit_idx);
-			void *va = (void *)(CACHE_START + i * PAGE_SIZE);
-			return va;
-		}
-	}
-	return NULL; // No free pages
-}
-
-// Helper function: Free a cache page
-static void free_cache_page(void *va) {
-	if (va < (void *)CACHE_START || va >= (void *)CACHE_END) {
-		return;
-	}
-	uint32_t idx = ((uintptr_t)va - CACHE_START) / PAGE_SIZE;
-	int byte_idx = idx / 8;
-	int bit_idx = idx % 8;
-	// Mark as free
-	cache_page_bitmap[byte_idx] |= (1 << bit_idx);
-}
-
-// Helper function: Initialize cache bitmap
-static void init_cache_bitmap(void) {
-	// Mark all pages as free initially
-	for (int i = 0; i < sizeof(cache_page_bitmap); i++) {
-		cache_page_bitmap[i] = 0xFF;
-	}
-	// Initialize mappings to NULL
-	for (int i = 0; i < MAX_DISK_BLOCKS; i++) {
-		block_to_cache[i] = NULL;
-	}
-	for (int i = 0; i < PAGES_IN_CACHE; i++) {
-		cache_to_block[i] = (uint32_t)-1; // Invalid block number
-	}
-}
-
-// Helper function: Get directory FCB pointer from block and offset
-struct File *get_dir_fcb(uint32_t block, uint32_t offset) {
-    if (block == 0) {
-        return NULL;
-    }
-    // Check if block is mapped
-    void *va = block_is_mapped(block);
-    if (va == NULL) {
-        if (read_block(block, NULL, NULL) < 0) {
-            return NULL;
-        }
-        va = block_is_mapped(block);
-    }
-    return (struct File *)((char *)va + offset);
-}
-
-// Helper function: Set dir block and offset for a file FCB
-void set_dir_info(struct File *f, struct File *dir) {
-    if (dir == &super->s_root) {
-        f->f_dir_block = 1; // super block contains root dir
-        f->f_dir_offset = offsetof(struct Super, s_root);
-        return;
-    }
-    // Find dir's position in its parent directory
-    if (dir->f_dir_block == 0) {
-        f->f_dir_block = 0;
-        f->f_dir_offset = 0;
-        return;
-    }
-    uint32_t nblock = dir->f_size / BLOCK_SIZE;
-    for (int i = 0; i < nblock; i++) {
-        uint32_t diskbno;
-        if (file_map_block(dir, i, &diskbno, 0) < 0) {
-            continue;
-        }
-        void *va = disk_addr(diskbno);
-        struct File *files = (struct File *)va;
-        for (int j = 0; j < FILE2BLK; j++) {
-            if (&files[j] == dir) {
-                f->f_dir_block = diskbno;
-                f->f_dir_offset = j * sizeof(struct File);
-                return;
-            }
-        }
-    }
-    f->f_dir_block = 0;
-    f->f_dir_offset = 0;
-}
-
-// Helper function: Find a file's position in a directory block, return its block and offset
-void find_file_pos(struct File *dir, struct File *f, uint32_t *diskbno_out, uint32_t *offset_out) {
-    if (dir == &super->s_root) {
-        *diskbno_out = 1;
-        *offset_out = offsetof(struct Super, s_root);
-        return;
-    }
-    uint32_t nblock = dir->f_size / BLOCK_SIZE;
-    for (int i = 0; i < nblock; i++) {
-        uint32_t diskbno;
-        if (file_map_block(dir, i, &diskbno, 0) < 0) {
-            continue;
-        }
-        void *va = disk_addr(diskbno);
-        struct File *files = (struct File *)va;
-        for (int j = 0; j < FILE2BLK; j++) {
-            if (&files[j] == f) {
-                *diskbno_out = diskbno;
-                *offset_out = j * sizeof(struct File);
-                return;
-            }
-        }
-    }
-    *diskbno_out = 0;
-    *offset_out = 0;
-}
+static uint32_t cache_bitmap[NCACHE_PAGES / 32];
+static void *block_va[MAX_DISK_BLOCKS];
+static uint32_t bitmap_storage[MAX_DISK_BLOCKS / 32 + 1];
 
 void file_flush(struct File *);
 int block_is_free(u_int);
-int file_map_block(struct File *f, u_int filebno, u_int *diskbno, u_int alloc);
+int read_block(u_int blockno, void **blk, u_int *isnew);
+void *block_is_mapped(u_int blockno);
+
+int file_has_parent(struct File *f) {
+	return f->f_dir_block != 0;
+}
+
+int file_get_by_loc(u_int block, u_int offset, struct File **pf) {
+	void *blk;
+	int r;
+
+	if ((r = read_block(block, &blk, 0)) < 0) {
+		return r;
+	}
+	*pf = (struct File *)((char *)blk + offset);
+	return 0;
+}
+
+int file_fcb_location(struct File *f, u_int *block, u_int *offset) {
+	if (f == &super->s_root) {
+		*block = ROOT_DIR_BLOCK;
+		*offset = ROOT_DIR_OFFSET;
+		return 0;
+	}
+
+	for (u_int bno = 0; bno < super->s_nblocks; bno++) {
+		void *va = block_is_mapped(bno);
+
+		if (va == NULL) {
+			continue;
+		}
+		if ((char *)f >= (char *)va && (char *)f < (char *)va + BLOCK_SIZE) {
+			*block = bno;
+			*offset = (char *)f - (char *)va;
+			return 0;
+		}
+	}
+	return -E_NOT_FOUND;
+}
+
+static void cache_init(void) {
+	memset(block_va, 0, sizeof(block_va));
+	memset(cache_bitmap, 0, sizeof(cache_bitmap));
+}
+
+static void *cache_page_alloc(void) {
+	for (u_int i = 0; i < NCACHE_PAGES; i++) {
+		if (!(cache_bitmap[i / 32] & (1U << (i % 32)))) {
+			cache_bitmap[i / 32] |= 1U << (i % 32);
+			return (void *)(CACHE_BASE + i * PAGE_SIZE);
+		}
+	}
+	return NULL;
+}
+
+static void cache_page_free(void *va) {
+	u_int i = ((u_long)va - CACHE_BASE) / PAGE_SIZE;
+
+	user_assert(i < NCACHE_PAGES);
+	cache_bitmap[i / 32] &= ~(1U << (i % 32));
+}
 
 // Overview:
-// Return the virtual address of this disk block in cache.
+//  Return the virtual address of this disk block in cache.
 void *disk_addr(u_int blockno) {
-	if (blockno >= MAX_DISK_BLOCKS) {
-		return NULL;
-	}
-	return block_to_cache[blockno];
+	return block_va[blockno];
 }
 
 // Overview:
 //  Check if this virtual address is mapped to a block. (check PTE_V bit)
 int va_is_mapped(void *va) {
+	if (va == NULL) {
+		return 0;
+	}
 	return (vpd[PDX(va)] & PTE_V) && (vpt[VPN(va)] & PTE_V);
 }
 
@@ -181,32 +98,36 @@ int va_is_mapped(void *va) {
 //  Check if this disk block is mapped in cache.
 //  Returns the virtual address of the cache page if mapped, 0 otherwise.
 void *block_is_mapped(u_int blockno) {
-	if (blockno >= MAX_DISK_BLOCKS) {
-		return NULL;
+	void *va = block_va[blockno];
+
+	if (va != NULL && va_is_mapped(va)) {
+		return va;
 	}
-	return block_to_cache[blockno]; // NULL means not mapped
+	if (va != NULL) {
+		block_va[blockno] = NULL;
+	}
+	return NULL;
 }
 
 // Overview:
 //  Check if this virtual address is dirty. (check PTE_DIRTY bit)
 int va_is_dirty(void *va) {
-	return va_is_mapped(va) && (vpt[VPN(va)] & PTE_DIRTY);
+	return vpt[VPN(va)] & PTE_DIRTY;
 }
 
 // Overview:
 //  Check if this block is dirty. (check corresponding `va`)
 int block_is_dirty(u_int blockno) {
 	void *va = block_is_mapped(blockno);
-	if (va == NULL) {
-		return 0;
-	}
-	return va_is_dirty(va);
+
+	return va != NULL && va_is_dirty(va);
 }
 
 // Overview:
 //  Mark this block as dirty (cache page has changed and needs to be written back to disk).
 int dirty_block(u_int blockno) {
 	void *va = block_is_mapped(blockno);
+
 	if (va == NULL) {
 		return -E_NOT_FOUND;
 	}
@@ -218,7 +139,6 @@ int dirty_block(u_int blockno) {
 	return syscall_mem_map(0, va, 0, va, PTE_D | PTE_DIRTY);
 }
 
-/* Lab 5 Key Code "write-block" */
 // Overview:
 //  Write the current contents of the block out to disk.
 void write_block(u_int blockno) {
@@ -228,13 +148,10 @@ void write_block(u_int blockno) {
 	}
 
 	// Step2: write data to IDE disk. (using ide_write, and the diskno is 0)
-	void *va = disk_addr(blockno);
+	void *va = block_is_mapped(blockno);
 	ide_write(0, blockno * SECT2BLK, va, SECT2BLK);
-	syscall_mem_map(0, va, 0, va, PTE_D);
 }
-/* End of Key Code "write-block" */
 
-/* Lab 5 Key Code "read-block" */
 // Overview:
 //  Make sure a particular disk block is loaded into memory.
 //
@@ -247,130 +164,96 @@ void write_block(u_int blockno) {
 //  to 1 if the block was loaded off disk to satisfy this request. (Isnew
 //  lets callers like file_get_block clear any memory-only fields
 //  from the disk blocks when they come in off disk.)
+//
+// Hint:
+//  use disk_addr, block_is_mapped, syscall_mem_alloc, and ide_read.
 int read_block(u_int blockno, void **blk, u_int *isnew) {
 	// Step 1: validate blockno. Make file the block to read is within the disk.
 	if (super && blockno >= super->s_nblocks) {
 		user_panic("reading non-existent block %08x\n", blockno);
 	}
-	if (blockno >= MAX_DISK_BLOCKS) {
-		user_panic("blockno %08x exceeds MAX_DISK_BLOCKS\n", blockno);
-	}
 
 	// Step 2: validate this block is used, not free.
+	// Hint:
+	//  If the bitmap is NULL, indicate that we haven't read bitmap from disk to memory
+	//  until now. So, before we check if a block is free using `block_is_free`, we must
+	//  ensure that the bitmap blocks are already read from the disk to memory.
 	if (bitmap && block_is_free(blockno)) {
 		user_panic("reading free block %08x\n", blockno);
 	}
 
-	// Step 3: check if already mapped
-	if (block_is_mapped(blockno)) { // the block is in memory
+	// Step 3: transform block number to corresponding virtual address.
+	void *va;
+	int r;
+
+	// Step 4: read disk and set *isnew.
+	if (block_is_mapped(blockno)) {
+		va = block_is_mapped(blockno);
 		if (isnew) {
 			*isnew = 0;
 		}
-		if (blk) {
-			*blk = block_to_cache[blockno];
+	} else {
+		va = cache_page_alloc();
+		if (va == NULL) {
+			return -E_NO_MEM;
 		}
-		return 0;
+		if ((r = syscall_mem_alloc(0, va, PTE_D)) < 0) {
+			cache_page_free(va);
+			return r;
+		}
+		block_va[blockno] = va;
+		ide_read(0, blockno * SECT2BLK, va, SECT2BLK);
+		if (isnew) {
+			*isnew = 1;
+		}
 	}
 
-	// Step 4: allocate a new cache page
-	void *va = alloc_cache_page();
-	if (va == NULL) {
-		user_panic("out of cache pages\n");
-		return -E_NO_MEM;
-	}
-
-	// Step 5: map the page and read from disk
-	if (isnew) {
-		*isnew = 1;
-	}
-	try(syscall_mem_alloc(0, va, PTE_D));
-	ide_read(0, blockno * SECT2BLK, va, SECT2BLK);
-
-	// Step 6: update mappings
-	block_to_cache[blockno] = va;
-	uint32_t cache_idx = ((uintptr_t)va - CACHE_START) / PAGE_SIZE;
-	cache_to_block[cache_idx] = blockno;
-
-	// Step 7: if blk != NULL, assign 'va' to '*blk'.
+	// Step 5: if blk != NULL, assign 'va' to '*blk'.
 	if (blk) {
 		*blk = va;
 	}
 	return 0;
 }
-/* End of Key Code "read-block" */
 
 // Overview:
 //  Allocate a page to cache the disk block.
 int map_block(u_int blockno) {
-	// Step 1: If the block is already mapped in cache, return 0.
+	int r;
+	void *va;
+
 	if (block_is_mapped(blockno)) {
 		return 0;
 	}
-	if (blockno >= MAX_DISK_BLOCKS) {
-		return -E_INVAL;
-	}
 
-	// Step 2: Allocate a cache page
-	void *va = alloc_cache_page();
+	va = cache_page_alloc();
 	if (va == NULL) {
 		return -E_NO_MEM;
 	}
-
-	// Step 3: Map the page
-	int r = syscall_mem_alloc(0, va, PTE_D);
-	if (r < 0) {
-		free_cache_page(va);
+	if ((r = syscall_mem_alloc(0, va, PTE_D)) < 0) {
+		cache_page_free(va);
 		return r;
 	}
-
-	// Step 4: Update mappings
-	block_to_cache[blockno] = va;
-	uint32_t cache_idx = ((uintptr_t)va - CACHE_START) / PAGE_SIZE;
-	cache_to_block[cache_idx] = blockno;
-
+	block_va[blockno] = va;
 	return 0;
 }
 
 // Overview:
 //  Unmap a disk block in cache.
 void unmap_block(u_int blockno) {
-	// Step 1: Get the mapped address of the cache page of this block
 	void *va = block_is_mapped(blockno);
+
 	if (va == NULL) {
-		return; // Already not mapped
-	}
-	if (blockno >= MAX_DISK_BLOCKS) {
 		return;
 	}
 
-	// Step 2: If this block is used (not free) and dirty in cache, write it back first
 	if (!block_is_free(blockno) && block_is_dirty(blockno)) {
 		write_block(blockno);
 	}
 
-	// Step 3: Update mappings
-	uint32_t cache_idx = ((uintptr_t)va - CACHE_START) / PAGE_SIZE;
-	block_to_cache[blockno] = NULL;
-	cache_to_block[cache_idx] = -1;
-
-	// Step 4: Unmap the virtual address and free cache page
 	panic_on(syscall_mem_unmap(0, va));
-	free_cache_page(va);
-
+	cache_page_free(va);
+	block_va[blockno] = NULL;
 	user_assert(!block_is_mapped(blockno));
-}
-
-// Helper function: Get pointer to bitmap entry, ensuring the bitmap block is cached
-static uint32_t *get_bitmap_entry(u_int blockno) {
-	u_int bitmap_block = (blockno / 32) / (BLOCK_SIZE / 4) + 2;
-	// Make sure the bitmap block is in cache
-	if (!block_is_mapped(bitmap_block)) {
-		void *blk;
-		read_block(bitmap_block, &blk, 0);
-	}
-	// Calculate offset within the bitmap block
-	u_int entry_within_block = (blockno / 32) % (BLOCK_SIZE / 4);
-	return (uint32_t *)((char *)disk_addr(bitmap_block) + entry_within_block * 4);
 }
 
 // Overview:
@@ -383,8 +266,7 @@ int block_is_free(u_int blockno) {
 		return 0;
 	}
 
-	uint32_t *entry = get_bitmap_entry(blockno);
-	if (*entry & (1 << (blockno % 32))) {
+	if (bitmap[blockno / 32] & (1 << (blockno % 32))) {
 		return 1;
 	}
 
@@ -394,19 +276,19 @@ int block_is_free(u_int blockno) {
 // Overview:
 //  Mark a block as free in the bitmap.
 void free_block(u_int blockno) {
+	// You can refer to the function 'block_is_free' above.
+	// Step 1: If 'blockno' is invalid (0 or >= the number of blocks in 'super'), return.
+	/* Exercise 5.4: Your code here. (1/2) */
+
 	if (blockno == 0 || blockno >= super->s_nblocks) {
 		return;
 	}
 
-	uint32_t *entry = get_bitmap_entry(blockno);
-	*entry |= 1 << (blockno & 0x1f);
+	// Step 2: Set the flag bit of 'blockno' in 'bitmap'.
+	// Hint: Use bit operations to update the bitmap, such as b[n / W] |= 1 << (n % W).
+	/* Exercise 5.4: Your code here. (2/2) */
 
-	u_int bitmap_block = (blockno / 32) / (BLOCK_SIZE / 4) + 2;
-	write_block(bitmap_block);
-
-	if (block_is_mapped(blockno)) {
-		unmap_block(blockno);
-	}
+	bitmap[blockno / 32] |= 1 << (blockno & 0x1f);
 }
 
 // Overview:
@@ -417,15 +299,12 @@ void free_block(u_int blockno) {
 //  Return -E_NO_DISK if we are out of blocks.
 int alloc_block_num(void) {
 	int blockno;
-	u_int nbitmap = (super->s_nblocks + BLOCK_SIZE_BIT - 1) / BLOCK_SIZE_BIT;
 	// walk through this bitmap, find a free one and mark it as used, then sync
 	// this block to IDE disk (using `write_block`) from memory.
-	for (blockno = nbitmap + 2; blockno < super->s_nblocks; blockno++) {
-		uint32_t *entry = get_bitmap_entry(blockno);
-		if (*entry & (1 << (blockno % 32))) { // the block is free
-			*entry &= ~(1 << (blockno % 32));
-			u_int bitmap_block = (blockno / 32) / (BLOCK_SIZE / 4) + 2;
-			write_block(bitmap_block); // write to disk.
+	for (blockno = 3; blockno < super->s_nblocks; blockno++) {
+		if (bitmap[blockno / 32] & (1 << (blockno % 32))) { // the block is free
+			bitmap[blockno / 32] &= ~(1 << (blockno % 32));
+			write_block(blockno / BLOCK_SIZE_BIT + 2); // write to disk.
 			return blockno;
 		}
 	}
@@ -491,18 +370,18 @@ void read_super(void) {
 //  For each block i, user_assert(!block_is_free(i))) to check that they're all marked as in use.
 void read_bitmap(void) {
 	u_int i;
-	void *blk;
+	void *blk = NULL;
 
-	// Step 1: Calculate the number of the bitmap blocks, and read them into memory.
-	u_int nbitmap = (super->s_nblocks + BLOCK_SIZE_BIT - 1) / BLOCK_SIZE_BIT;
+	u_int nbitmap = super->s_nblocks / BLOCK_SIZE_BIT + 1;
 	for (i = 0; i < nbitmap; i++) {
 		read_block(i + 2, &blk, 0);
+		memcpy((char *)bitmap_storage + i * BLOCK_SIZE, blk, BLOCK_SIZE);
 	}
 
-	// Set bitmap to the first bitmap block's cache address
-	bitmap = (uint32_t *)disk_addr(2);
+	bitmap = bitmap_storage;
 
 	// Step 2: Make sure the reserved and root blocks are marked in-use.
+	// Hint: use `block_is_free`
 	user_assert(!block_is_free(0));
 	user_assert(!block_is_free(1));
 
@@ -517,31 +396,28 @@ void read_bitmap(void) {
 // Overview:
 //  Test that write_block works, by smashing the superblock and reading it back.
 void check_write_block(void) {
+	void *backup;
+	void *superblk;
+
 	super = 0;
-	void *blk0, *blk1;
 
-	// backup the super block.
-	panic_on(read_block(0, &blk0, 0));
-	panic_on(read_block(1, &blk1, 0));
-	memcpy((char *)blk0, (char *)blk1, BLOCK_SIZE);
+	panic_on(read_block(0, &backup, 0));
+	panic_on(read_block(1, &superblk, 0));
+	memcpy(backup, superblk, BLOCK_SIZE);
 
-	// smash it
-	strcpy((char *)blk1, "OOPS!\n");
+	strcpy((char *)superblk, "OOPS!\n");
 	write_block(1);
 	user_assert(block_is_mapped(1));
 
-	// clear it out - use unmap_block instead of direct syscall
 	unmap_block(1);
 	user_assert(!block_is_mapped(1));
 
-	// validate the data read from the disk.
-	panic_on(read_block(1, &blk1, 0));
-	user_assert(strcmp((char *)blk1, "OOPS!\n") == 0);
+	panic_on(read_block(1, &superblk, 0));
+	user_assert(strcmp((char *)superblk, "OOPS!\n") == 0);
 
-	// restore the super block.
-	memcpy((char *)blk1, (char *)blk0, BLOCK_SIZE);
+	memcpy(superblk, backup, BLOCK_SIZE);
 	write_block(1);
-	super = (struct Super *)blk1;
+	super = (struct Super *)block_is_mapped(1);
 }
 
 // Overview:
@@ -551,38 +427,10 @@ void check_write_block(void) {
 //  2. check if the disk can work.
 //  3. read bitmap blocks from disk to memory.
 void fs_init(void) {
-	init_cache_bitmap();
+	cache_init();
 	read_super();
 	check_write_block();
 	read_bitmap();
-}
-
-// Overview:
-//  Find the disk block where 'f' is in. Then mark this block as dirty.
-void dirty_fcb(struct File *f) {
-	if (f->f_dir_block != 0) {
-		// Get dir FCB first
-		struct File *dir = get_dir_fcb(f->f_dir_block, f->f_dir_offset);
-		if (dir) {
-			u_int nblock = dir->f_size / BLOCK_SIZE;
-			for (int i = 0; i < nblock; i++) {
-				u_int diskbno;
-				struct File *files;
-				if (file_map_block(dir, i, &diskbno, 0) < 0) {
-					debugf("dirty_fcb: file_map_block failed\n");
-					break;
-				}
-				files = block_is_mapped(diskbno);
-				if (files && files <= f && f < files + FILE2BLK) {
-					dirty_block(diskbno);
-					break;
-				}
-			}
-		}
-	} else if (f == &super->s_root) {
-		// Root dir is in super block (block 1)
-		dirty_block(1);
-	}
 }
 
 // Overview:
@@ -619,7 +467,6 @@ int file_block_walk(struct File *f, u_int filebno, uint32_t **ppdiskbno, u_int a
 				return r;
 			}
 			f->f_indirect = r;
-			dirty_fcb(f);
 		}
 
 		// Step 3: read the new indirect block to memory.
@@ -691,7 +538,6 @@ int file_clear_block(struct File *f, u_int filebno) {
 	return 0;
 }
 
-/* Lab 5 Key Code "file-get-block" */
 // Overview:
 //  Set *blk to point at the filebno'th block in file f.
 //
@@ -715,7 +561,6 @@ int file_get_block(struct File *f, u_int filebno, void **blk) {
 	}
 	return 0;
 }
-/* End of Key Code "file-get-block" */
 
 // Overview:
 //  Mark the offset/BLOCK_SIZE'th block dirty in file f.
@@ -739,6 +584,7 @@ int file_dirty(struct File *f, u_int offset) {
 int dir_lookup(struct File *dir, char *name, struct File **file) {
 	// Step 1: Calculate the number of blocks in 'dir' via its size.
 	u_int nblock;
+	/* Exercise 5.8: Your code here. (1/3) */
 
 	nblock = dir->f_size / BLOCK_SIZE;
 
@@ -746,6 +592,7 @@ int dir_lookup(struct File *dir, char *name, struct File **file) {
 	for (int i = 0; i < nblock; i++) {
 		// Read the i'th block of 'dir' and get its address in 'blk' using 'file_get_block'.
 		void *blk;
+		/* Exercise 5.8: Your code here. (2/3) */
 
 		try(file_get_block(dir, i, &blk));
 		struct File *files = (struct File *)blk;
@@ -753,9 +600,11 @@ int dir_lookup(struct File *dir, char *name, struct File **file) {
 		// Find the target among all 'File's in this block.
 		for (struct File *f = files; f < files + FILE2BLK; ++f) {
 			// Compare the file name against 'name' using 'strcmp'.
+			// If we find the target file, set '*file' to it and set up its 'f_dir'
+			// field.
+			/* Exercise 5.8: Your code here. (3/3) */
 			if (strcmp(name, f->f_name) == 0) {
 				*file = f;
-				// Don't modify file's dir info here - it should already be set during creation
 				return 0;
 			}
 		}
@@ -794,7 +643,6 @@ int dir_alloc_file(struct File *dir, struct File **file) {
 	// no free File structure in exists data block.
 	// new data block need to be created.
 	dir->f_size += BLOCK_SIZE;
-	dirty_fcb(dir);
 	if ((r = file_get_block(dir, i, &blk)) < 0) {
 		return r;
 	}
@@ -904,6 +752,7 @@ int file_create(char *path, struct File **file) {
 	char name[MAXNAMELEN];
 	int r;
 	struct File *dir, *f;
+	u_int dir_block, dir_offset;
 
 	if ((r = walk_path(path, &dir, &f, name)) == 0) {
 		return -E_FILE_EXISTS;
@@ -917,24 +766,12 @@ int file_create(char *path, struct File **file) {
 		return r;
 	}
 
+	panic_on(file_fcb_location(dir, &dir_block, &dir_offset));
+	memset(f, 0, sizeof(*f));
 	strcpy(f->f_name, name);
-	f->f_size = 0;
 	f->f_type = FTYPE_REG;
-	for (int i = 0; i < NDIRECT; i++) {
-		f->f_direct[i] = 0;
-	}
-	f->f_indirect = 0;
-	// Set dir info
-	uint32_t dir_block, dir_offset;
-	find_file_pos(dir, dir, &dir_block, &dir_offset);
 	f->f_dir_block = dir_block;
 	f->f_dir_offset = dir_offset;
-
-	dirty_fcb(f);
-	struct File *dir_fcb = get_dir_fcb(f->f_dir_block, f->f_dir_offset);
-	if (dir_fcb) {
-		file_flush(dir_fcb);
-	}
 	*file = f;
 	return 0;
 }
@@ -975,7 +812,6 @@ void file_truncate(struct File *f, u_int newsize) {
 		}
 	}
 	f->f_size = newsize;
-	dirty_fcb(f);
 }
 
 // Overview:
@@ -983,9 +819,16 @@ void file_truncate(struct File *f, u_int newsize) {
 int file_set_size(struct File *f, u_int newsize) {
 	if (f->f_size > newsize) {
 		file_truncate(f, newsize);
-	} else {
-		f->f_size = newsize;
-		dirty_fcb(f);
+	}
+
+	f->f_size = newsize;
+
+	if (file_has_parent(f)) {
+		struct File *dir;
+
+		if (file_get_by_loc(f->f_dir_block, f->f_dir_offset, &dir) == 0) {
+			file_flush(dir);
+		}
 	}
 
 	return 0;
@@ -1027,20 +870,41 @@ void fs_sync(void) {
 	}
 }
 
+static void file_dirty_parent_entry(struct File *f) {
+	struct File *dir;
+	u_int fcb_block, fcb_offset;
+
+	if (!file_has_parent(f)) {
+		return;
+	}
+	if (file_fcb_location(f, &fcb_block, &fcb_offset) < 0) {
+		return;
+	}
+	dirty_block(fcb_block);
+	if (file_get_by_loc(f->f_dir_block, f->f_dir_offset, &dir) == 0) {
+		file_flush(dir);
+	}
+}
+
 // Overview:
 //  Close a file.
 void file_close(struct File *f) {
-	// Flush the file itself. Then unmap all blocks of the file.
+	u_int nblock;
+	u_int diskbno;
+	int r;
+
 	file_flush(f);
-	// Remove the check for FTYPE_REG - unmap blocks for both regular files and directories
-	u_int nblock = f->f_size / BLOCK_SIZE;
-	for (int i = 0; i < nblock; i++) {
-		u_int diskbno;
-		if (file_map_block(f, i, &diskbno, 0) < 0) {
-			debugf("file_close: file_map_block failed\n");
-			break;
+	file_dirty_parent_entry(f);
+
+	nblock = f->f_size / BLOCK_SIZE;
+	for (u_int i = 0; i < nblock; i++) {
+		if ((r = file_map_block(f, i, &diskbno, 0)) < 0) {
+			continue;
 		}
 		unmap_block(diskbno);
+	}
+	if (f->f_indirect) {
+		unmap_block(f->f_indirect);
 	}
 }
 
@@ -1061,11 +925,14 @@ int file_remove(char *path) {
 	// Step 3: clear it's name.
 	f->f_name[0] = '\0';
 
-	// Step 4: flush f's dir.
-	dirty_fcb(f);
-	struct File *dir_fcb = get_dir_fcb(f->f_dir_block, f->f_dir_offset);
-	if (dir_fcb) {
-		file_flush(dir_fcb);
+	// Step 4: flush the file.
+	file_flush(f);
+	if (file_has_parent(f)) {
+		struct File *dir;
+
+		if (file_get_by_loc(f->f_dir_block, f->f_dir_offset, &dir) == 0) {
+			file_flush(dir);
+		}
 	}
 
 	return 0;

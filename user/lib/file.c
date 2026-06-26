@@ -88,6 +88,14 @@ int file_close(struct Fd *fd) {
 	// Set the start address storing the file's content.
 	va = fd2data(fd);
 
+	// Tell the file server the dirty page.
+	for (i = 0; i < size; i += PTMAP) {
+		if ((r = fsipc_dirty(fileid, i)) < 0) {
+			debugf("cannot mark pages as dirty\n");
+			return r;
+		}
+	}
+
 	// Request the file server to close the file with fsipc.
 	if ((r = fsipc_close(fileid)) < 0) {
 		debugf("cannot close the file\n");
@@ -185,13 +193,6 @@ static int file_write(struct Fd *fd, const void *buf, u_int n, u_int offset) {
 
 	// Write the data
 	memcpy((char *)fd2data(fd) + offset, buf, n);
-
-	for (u_int i = ROUNDDOWN(offset, PTMAP); i < offset + n; i += PTMAP) {
-		if ((r = fsipc_dirty(f->f_fileid, i)) < 0) {
-			debugf("cannot mark pages as dirty\n");
-			return r;
-		}
-	}
 	return n;
 }
 

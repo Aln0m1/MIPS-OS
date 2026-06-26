@@ -16,7 +16,6 @@ void ls(char *path, char *prefix) {
 		lsdir(path, prefix);
 	} else {
 		ls1(0, st.st_isdir, st.st_size, path);
-		printf("\n");
 	}
 }
 
@@ -32,7 +31,6 @@ void lsdir(char *path, char *prefix) {
 			ls1(prefix, f.f_type == FTYPE_DIR, f.f_size, f.f_name);
 		}
 	}
-	printf("\n");
 	if (n > 0) {
 		user_panic("short read in directory %s", path);
 	}
@@ -88,5 +86,6 @@ int main(int argc, char **argv) {
 			ls(argv[i], argv[i]);
 		}
 	}
+	printf("\n");
 	return 0;
 }
