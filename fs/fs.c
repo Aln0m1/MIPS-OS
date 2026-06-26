@@ -273,6 +273,16 @@ int block_is_free(u_int blockno) {
 	return 0;
 }
 
+static void sync_bitmap_block(u_int blockno) {
+	u_int bmp_blk = blockno / BLOCK_SIZE_BIT + 2;
+	void *va = block_is_mapped(bmp_blk);
+
+	if (va) {
+		memcpy(va, (char *)bitmap_storage + (bmp_blk - 2) * BLOCK_SIZE, BLOCK_SIZE);
+		dirty_block(bmp_blk);
+	}
+}
+
 // Overview:
 //  Mark a block as free in the bitmap.
 void free_block(u_int blockno) {
@@ -289,6 +299,7 @@ void free_block(u_int blockno) {
 	/* Exercise 5.4: Your code here. (2/2) */
 
 	bitmap[blockno / 32] |= 1 << (blockno & 0x1f);
+	sync_bitmap_block(blockno);
 }
 
 // Overview:
@@ -304,6 +315,7 @@ int alloc_block_num(void) {
 	for (blockno = 3; blockno < super->s_nblocks; blockno++) {
 		if (bitmap[blockno / 32] & (1 << (blockno % 32))) { // the block is free
 			bitmap[blockno / 32] &= ~(1 << (blockno % 32));
+			sync_bitmap_block(blockno);
 			write_block(blockno / BLOCK_SIZE_BIT + 2); // write to disk.
 			return blockno;
 		}
