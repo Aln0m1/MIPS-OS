@@ -44,6 +44,12 @@
 // File not a valid executable
 #define E_NOT_EXEC 13
 
+// Futex-style wait would block because the observed value changed
+#define E_AGAIN 100
+
+// Mutex is already locked
+#define E_BUSY 101
+
 /*
  * A quick wrapper around function calls to propagate errors.
  * Use this with caution, as it leaks resources we've acquired so far.

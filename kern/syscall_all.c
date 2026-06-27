@@ -1,5 +1,6 @@
 #include <env.h>
 #include <io.h>
+#include <mfutex.h>
 #include <mmu.h>
 #include <pmap.h>
 #include <printk.h>
@@ -7,6 +8,8 @@
 #include <syscall.h>
 
 extern struct Env *curenv;
+extern struct Env envs[];
+int sys_mfutex(uint32_t *uaddr, u_int op, uint32_t val);
 
 /* Overview:
  * 	This function is used to print a character on screen.
@@ -118,6 +121,53 @@ static inline int is_illegal_va_range(u_long va, u_int len) {
 		return 0;
 	}
 	return va + len < va || va < UTEMP || va + len > UTOP;
+}
+
+static inline int is_illegal_user_word(u_long va) {
+	return (va & 3) || va < UTEXT || va + sizeof(int) < va || va + sizeof(int) > KSEG0;
+}
+
+static int write_env_word(struct Env *env, u_int va, int value) {
+	Pte *pte;
+	struct Page *pp;
+	if (is_illegal_user_word(va)) {
+		return -E_INVAL;
+	}
+	pp = page_lookup(env->env_pgdir, va, &pte);
+	if (pp == NULL || (*pte & PTE_D) == 0) {
+		return -E_INVAL;
+	}
+	*(int *)(KADDR(page2pa(pp)) + (va & (PAGE_SIZE - 1))) = value;
+	return 0;
+}
+
+static int validate_env_writable_word(struct Env *env, u_int va) {
+	Pte *pte;
+	struct Page *pp;
+	if (is_illegal_user_word(va)) {
+		return -E_INVAL;
+	}
+	pp = page_lookup(env->env_pgdir, va, &pte);
+	if (pp == NULL || (*pte & PTE_D) == 0) {
+		return -E_INVAL;
+	}
+	return 0;
+}
+
+static void thread_make_runnable(struct Env *env) {
+	if (env->env_status != ENV_RUNNABLE) {
+		env->env_status = ENV_RUNNABLE;
+		TAILQ_INSERT_TAIL(&env_sched_list, env, env_sched_link);
+	}
+}
+
+static int is_child_thread_group(struct Env *target) {
+	for (struct Env *e = envs; e < envs + NENV; e++) {
+		if (e->env_status != ENV_FREE && e->env_id == target->env_tgid) {
+			return e->env_parent_id == curenv->env_tgid;
+		}
+	}
+	return 0;
 }
 
 /* Overview:
@@ -272,8 +322,87 @@ int sys_exofork(void) {
 
 	e->env_status = ENV_NOT_RUNNABLE;
 	e->env_pri = curenv->env_pri;
+	e->env_tgid = e->env_id;
 
 	return e->env_id;
+}
+
+int sys_create_thread(void *(*entry_point)(void *), void *stack, void *arg) {
+	u_int entry = (u_int)entry_point;
+	u_int sp = (u_int)stack;
+	struct Env *e;
+
+	if ((entry & 3) || (sp & 3) || entry < UTEXT || entry >= KSEG0 ||
+	    sp < USTACKTOP - PDMAP || sp >= USTACKTOP) {
+		return -E_INVAL;
+	}
+	try(env_alloc_thread(&e));
+	e->env_tf.cp0_epc = entry;
+	e->env_tf.regs[4] = (u_int)arg;
+	e->env_tf.regs[29] = sp - 16;
+	e->env_status = ENV_RUNNABLE;
+	TAILQ_INSERT_TAIL(&env_sched_list, e, env_sched_link);
+	return e->env_id;
+}
+
+int sys_gettgid(void) {
+	return curenv->env_tgid;
+}
+
+void __attribute__((noreturn)) sys_exit(int return_value) {
+	int has_waiter = 0;
+
+	curenv->env_return_value = return_value;
+	curenv->env_status = ENV_ZOMBIE;
+	TAILQ_REMOVE(&env_sched_list, curenv, env_sched_link);
+
+	for (struct Env *e = envs; e < envs + NENV; e++) {
+		if (e->env_status == ENV_NOT_RUNNABLE && e->env_wait_type == ENV_WAIT_THREAD &&
+		    e->env_wait_target == curenv->env_id) {
+			if (write_env_word(e, e->env_wait_ret_va, return_value) == 0) {
+				e->env_wait_type = ENV_WAIT_NONE;
+				e->env_wait_target = 0;
+				e->env_wait_ret_va = 0;
+				e->env_tf.regs[2] = 0;
+				thread_make_runnable(e);
+				has_waiter = 1;
+			}
+		}
+	}
+
+	if (has_waiter) {
+		struct Env *zombie = curenv;
+		curenv = NULL;
+		env_free(zombie);
+		schedule(1);
+	}
+	schedule(1);
+}
+
+int sys_wait(u_int envid, int *return_value_ptr) {
+	struct Env *target;
+	u_int ret_va = (u_int)return_value_ptr;
+
+	if (validate_env_writable_word(curenv, ret_va) != 0) {
+		return -E_INVAL;
+	}
+	if (envid2env(envid, &target, 0) < 0 || target == curenv ||
+	    (target->env_tgid != curenv->env_tgid && !is_child_thread_group(target))) {
+		return -E_BAD_ENV;
+	}
+	if (target->env_status == ENV_ZOMBIE) {
+		try(write_env_word(curenv, ret_va, target->env_return_value));
+		env_free(target);
+		return 0;
+	}
+
+	curenv->env_wait_type = ENV_WAIT_THREAD;
+	curenv->env_wait_target = envid;
+	curenv->env_wait_ret_va = ret_va;
+	curenv->env_status = ENV_NOT_RUNNABLE;
+	TAILQ_REMOVE(&env_sched_list, curenv, env_sched_link);
+	((struct Trapframe *)KSTACKTOP - 1)->regs[2] = 0;
+	schedule(1);
 }
 
 /* Overview:
@@ -585,6 +714,11 @@ void *syscall_table[MAX_SYSNO] = {
     [SYS_cgetc] = sys_cgetc,
     [SYS_write_dev] = sys_write_dev,
     [SYS_read_dev] = sys_read_dev,
+    [SYS_create_thread] = sys_create_thread,
+    [SYS_gettgid] = sys_gettgid,
+    [SYS_exit] = sys_exit,
+    [SYS_wait] = sys_wait,
+    [SYS_mfutex] = sys_mfutex,
 };
 
 /* Overview:

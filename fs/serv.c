@@ -17,8 +17,6 @@
  */
 struct Open {
 	struct File *o_file;
-	u_int o_file_block;
-	u_int o_file_offset;
 	u_int o_fileid;
 	int o_mode;
 	struct Filefd *o_ff;
@@ -118,14 +116,6 @@ int open_lookup(u_int envid, u_int fileid, struct Open **po) {
 	*po = o;
 	return 0;
 }
-
-static void open_refresh_file(struct Open *o) {
-	struct File *f;
-
-	if (file_get_by_loc(o->o_file_block, o->o_file_offset, &f) == 0) {
-		o->o_file = f;
-	}
-}
 /*
  * Functions with the prefix "serve_" are those who
  * conduct the file system requests from clients.
@@ -176,10 +166,6 @@ void serve_open(u_int envid, struct Fsreq_open *rq) {
 
 	// Save the file pointer.
 	o->o_file = f;
-	if (file_fcb_location(f, &o->o_file_block, &o->o_file_offset) < 0) {
-		o->o_file_block = 0;
-		o->o_file_offset = 0;
-	}
 
 	// If mode include O_TRUNC, set the file size to 0
 	if (rq->req_omode & O_TRUNC) {
@@ -221,7 +207,6 @@ void serve_map(u_int envid, struct Fsreq_map *rq) {
 		ipc_send(envid, r, 0, 0);
 		return;
 	}
-	open_refresh_file(pOpen);
 
 	filebno = rq->req_offset / BLOCK_SIZE;
 
@@ -252,7 +237,6 @@ void serve_set_size(u_int envid, struct Fsreq_set_size *rq) {
 		ipc_send(envid, r, 0, 0);
 		return;
 	}
-	open_refresh_file(pOpen);
 
 	if ((r = file_set_size(pOpen->o_file, rq->req_size)) < 0) {
 		ipc_send(envid, r, 0, 0);
@@ -283,7 +267,6 @@ void serve_close(u_int envid, struct Fsreq_close *rq) {
 		ipc_send(envid, r, 0, 0);
 		return;
 	}
-	open_refresh_file(pOpen);
 
 	file_close(pOpen->o_file);
 	ipc_send(envid, 0, 0, 0);
@@ -331,7 +314,6 @@ void serve_dirty(u_int envid, struct Fsreq_dirty *rq) {
 		ipc_send(envid, r, 0, 0);
 		return;
 	}
-	open_refresh_file(pOpen);
 
 	if ((r = file_dirty(pOpen->o_file, rq->req_offset)) < 0) {
 		ipc_send(envid, r, 0, 0);

@@ -68,6 +68,11 @@ int syscall_ipc_recv(void *dstva);
 int syscall_cgetc(void);
 int syscall_write_dev(void *va, u_int dev, u_int len);
 int syscall_read_dev(void *va, u_int dev, u_int len);
+int syscall_create_thread(void *(*entry_point)(void *), void *stack, void *arg);
+int syscall_gettgid(void);
+void syscall_exit(int return_value) __attribute__((noreturn));
+int syscall_wait(u_int envid, int *return_value_ptr);
+int syscall_mfutex(uint32_t *uaddr, u_int op, uint32_t val);
 
 // ipc.c
 void ipc_send(u_int whom, u_int val, const void *srcva, u_int perm);

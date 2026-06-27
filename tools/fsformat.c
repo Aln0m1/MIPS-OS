@@ -2,7 +2,6 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <libgen.h>
-#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,8 +74,6 @@ void reverse_block(struct Block *b) {
 			reverse(&ff->f_direct[i]);
 		}
 		reverse(&ff->f_indirect);
-		reverse(&ff->f_dir_block);
-		reverse(&ff->f_dir_offset);
 		break;
 	case BLOCK_FILE:
 		f = (struct File *)b->data;
@@ -91,8 +88,6 @@ void reverse_block(struct Block *b) {
 					reverse(&ff->f_direct[j]);
 				}
 				reverse(&ff->f_indirect);
-				reverse(&ff->f_dir_block);
-				reverse(&ff->f_dir_offset);
 			}
 		}
 		break;
@@ -135,27 +130,6 @@ void init_disk() {
 	super.s_nblocks = NBLOCK;
 	super.s_root.f_type = FTYPE_DIR;
 	strcpy(super.s_root.f_name, "/");
-	super.s_root.f_dir_block = 0;
-	super.s_root.f_dir_offset = 0;
-}
-
-static void file_set_parent(struct File *child, struct File *dir) {
-	if (dir == &super.s_root) {
-		child->f_dir_block = 1;
-		child->f_dir_offset = offsetof(struct Super, s_root);
-		return;
-	}
-
-	for (int i = 0; i < nextbno; ++i) {
-		if ((char *)dir >= (char *)disk[i].data &&
-		    (char *)dir < (char *)disk[i].data + BLOCK_SIZE) {
-			child->f_dir_block = i;
-			child->f_dir_offset = (uint32_t)((char *)dir - (char *)disk[i].data);
-			return;
-		}
-	}
-	child->f_dir_block = 0;
-	child->f_dir_offset = 0;
 }
 
 // Get next block id, and set `type` to the block's type.
@@ -273,7 +247,6 @@ struct File *create_file(struct File *dirf) {
 void write_file(struct File *dirf, const char *path) {
 	int iblk = 0, r = 0, n = sizeof(disk[0].data);
 	struct File *target = create_file(dirf);
-	file_set_parent(target, dirf);
 
 	/* in case `create_file` is't filled */
 	if (target == NULL) {
@@ -316,7 +289,6 @@ void write_directory(struct File *dirf, char *path) {
 		return;
 	}
 	struct File *pdir = create_file(dirf);
-	file_set_parent(pdir, dirf);
 	strncpy(pdir->f_name, basename(path), MAXNAMELEN - 1);
 	if (pdir->f_name[MAXNAMELEN - 1] != 0) {
 		fprintf(stderr, "file name is too long: %s\n", path);

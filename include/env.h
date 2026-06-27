@@ -14,6 +14,11 @@
 #define ENV_FREE 0
 #define ENV_RUNNABLE 1
 #define ENV_NOT_RUNNABLE 2
+#define ENV_ZOMBIE 3
+
+#define ENV_WAIT_NONE 0
+#define ENV_WAIT_THREAD 1
+#define ENV_WAIT_FUTEX 2
 
 // Control block of an environment (process).
 struct Env {
@@ -22,6 +27,7 @@ struct Env {
 	u_int env_id;			 // unique environment identifier
 	u_int env_asid;			 // ASID of this env
 	u_int env_parent_id;		 // env_id of this env's parent
+	u_int env_tgid;			 // thread group id
 	u_int env_status;		 // status of this env
 	Pde *env_pgdir;			 // page directory
 	TAILQ_ENTRY(Env) env_sched_link; // intrusive entry in 'env_sched_list'
@@ -39,6 +45,13 @@ struct Env {
 
 	// Lab 6 scheduler counts
 	u_int env_runs; // number of times we've been env_run'ed
+
+	// Challenge: thread exit/wait and mfutex blocking state
+	int env_return_value;
+	u_int env_wait_type;
+	u_int env_wait_target;
+	u_int env_wait_ret_va;
+	u_int env_futex_pa;
 };
 
 LIST_HEAD(Env_list, Env);
@@ -48,6 +61,7 @@ extern struct Env_sched_list env_sched_list; // runnable env list
 
 void env_init(void);
 int env_alloc(struct Env **e, u_int parent_id);
+int env_alloc_thread(struct Env **e);
 void env_free(struct Env *);
 struct Env *env_create(const void *binary, size_t size, int priority);
 void env_destroy(struct Env *e);

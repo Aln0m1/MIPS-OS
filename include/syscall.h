@@ -22,6 +22,11 @@ enum {
 	SYS_cgetc,
 	SYS_write_dev,
 	SYS_read_dev,
+	SYS_create_thread,
+	SYS_gettgid,
+	SYS_exit,
+	SYS_wait,
+	SYS_mfutex,
 	MAX_SYSNO,
 };
 

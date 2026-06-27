@@ -11,5 +11,5 @@ ifeq ($(call lab-ge,3), true)
 endif
 
 ifeq ($(call lab-ge,4), true)
-	targets     += syscall_all.o
+	targets     += syscall_all.o mfutex.o
 endif

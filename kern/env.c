@@ -131,7 +131,8 @@ int envid2env(u_int envid, struct Env **penv, int checkperm) {
 	 *   If violated, return '-E_BAD_ENV'.
 	 */
 	/* Exercise 4.3: Your code here. (2/2) */
-	if (checkperm && e != curenv && e->env_parent_id != curenv->env_id) {
+	if (checkperm && e != curenv && e->env_parent_id != curenv->env_id &&
+	    e->env_tgid != curenv->env_tgid) {
 		return -E_BAD_ENV;
 	}
 
@@ -272,6 +273,12 @@ int env_alloc(struct Env **new, u_int parent_id) {
 	}
 	e->env_id = mkenvid(e);
 	e->env_parent_id = parent_id;
+	e->env_tgid = e->env_id;
+	e->env_return_value = 0;
+	e->env_wait_type = ENV_WAIT_NONE;
+	e->env_wait_target = 0;
+	e->env_wait_ret_va = 0;
+	e->env_futex_pa = 0;
 
 	/* Step 4: Initialize the sp and 'cp0_status' in 'e->env_tf'.
 	 *   Set the EXL bit to ensure that the processor remains in kernel mode during context
@@ -286,6 +293,40 @@ int env_alloc(struct Env **new, u_int parent_id) {
 	/* Exercise 3.4: Your code here. (4/4) */
 
 	LIST_REMOVE(e, env_link);
+
+	*new = e;
+	return 0;
+}
+
+int env_alloc_thread(struct Env **new) {
+	struct Env *e = LIST_FIRST(&env_free_list);
+	if (e == NULL) {
+		return -E_NO_FREE_ENV;
+	}
+	LIST_REMOVE(e, env_link);
+
+	e->env_id = mkenvid(e);
+	e->env_asid = curenv->env_asid;
+	e->env_parent_id = curenv->env_id;
+	e->env_tgid = curenv->env_tgid;
+	e->env_status = ENV_NOT_RUNNABLE;
+	e->env_pgdir = curenv->env_pgdir;
+	e->env_pri = curenv->env_pri;
+	e->env_ipc_value = 0;
+	e->env_ipc_from = 0;
+	e->env_ipc_recving = 0;
+	e->env_ipc_dstva = 0;
+	e->env_ipc_perm = 0;
+	e->env_user_tlb_mod_entry = curenv->env_user_tlb_mod_entry;
+	e->env_runs = 0;
+	e->env_return_value = 0;
+	e->env_wait_type = ENV_WAIT_NONE;
+	e->env_wait_target = 0;
+	e->env_wait_ret_va = 0;
+	e->env_futex_pa = 0;
+	memset(&e->env_tf, 0, sizeof e->env_tf);
+	e->env_tf.cp0_status = STATUS_IM7 | STATUS_IE | STATUS_EXL | STATUS_UM;
+	e->env_tf.regs[29] = USTACKTOP - sizeof(int) - sizeof(char **);
 
 	*new = e;
 	return 0;
@@ -401,42 +442,54 @@ struct Env *env_create(const void *binary, size_t size, int priority) {
 void env_free(struct Env *e) {
 	Pte *pt;
 	u_int pdeno, pteno, pa;
+	int free_vm = 1;
+	int was_runnable = e->env_status == ENV_RUNNABLE;
 
 	/* Hint: Note the environment's demise.*/
 	printk("[%08x] free env %08x\n", curenv ? curenv->env_id : 0, e->env_id);
 
-	/* Hint: Flush all mapped pages in the user portion of the address space */
-	for (pdeno = 0; pdeno < PDX(UTOP); pdeno++) {
-		/* Hint: only look at mapped page tables. */
-		if (!(e->env_pgdir[pdeno] & PTE_V)) {
-			continue;
+	for (struct Env *other = envs; other < envs + NENV; other++) {
+		if (other != e && other->env_status != ENV_FREE && other->env_pgdir == e->env_pgdir) {
+			free_vm = 0;
+			break;
 		}
-		/* Hint: find the pa and va of the page table. */
-		pa = PTE_ADDR(e->env_pgdir[pdeno]);
-		pt = (Pte *)KADDR(pa);
-		/* Hint: Unmap all PTEs in this page table. */
-		for (pteno = 0; pteno <= PTX(~0); pteno++) {
-			if (pt[pteno] & PTE_V) {
-				page_remove(e->env_pgdir, e->env_asid,
-					    (pdeno << PDSHIFT) | (pteno << PGSHIFT));
-			}
-		}
-		/* Hint: free the page table itself. */
-		e->env_pgdir[pdeno] = 0;
-		page_decref(pa2page(pa));
-		/* Hint: invalidate page table in TLB */
-		tlb_invalidate(e->env_asid, UVPT + (pdeno << PGSHIFT));
 	}
-	/* Hint: free the page directory. */
-	page_decref(pa2page(PADDR(e->env_pgdir)));
-	/* Hint: free the ASID */
-	asid_free(e->env_asid);
-	/* Hint: invalidate page directory in TLB */
-	tlb_invalidate(e->env_asid, UVPT + (PDX(UVPT) << PGSHIFT));
+	if (free_vm) {
+		/* Hint: Flush all mapped pages in the user portion of the address space */
+		for (pdeno = 0; pdeno < PDX(UTOP); pdeno++) {
+			/* Hint: only look at mapped page tables. */
+			if (!(e->env_pgdir[pdeno] & PTE_V)) {
+				continue;
+			}
+			/* Hint: find the pa and va of the page table. */
+			pa = PTE_ADDR(e->env_pgdir[pdeno]);
+			pt = (Pte *)KADDR(pa);
+			/* Hint: Unmap all PTEs in this page table. */
+			for (pteno = 0; pteno <= PTX(~0); pteno++) {
+				if (pt[pteno] & PTE_V) {
+					page_remove(e->env_pgdir, e->env_asid,
+						    (pdeno << PDSHIFT) | (pteno << PGSHIFT));
+				}
+			}
+			/* Hint: free the page table itself. */
+			e->env_pgdir[pdeno] = 0;
+			page_decref(pa2page(pa));
+			/* Hint: invalidate page table in TLB */
+			tlb_invalidate(e->env_asid, UVPT + (pdeno << PGSHIFT));
+		}
+		/* Hint: free the page directory. */
+		page_decref(pa2page(PADDR(e->env_pgdir)));
+		/* Hint: free the ASID */
+		asid_free(e->env_asid);
+		/* Hint: invalidate page directory in TLB */
+		tlb_invalidate(e->env_asid, UVPT + (PDX(UVPT) << PGSHIFT));
+	}
 	/* Hint: return the environment to the free list. */
 	e->env_status = ENV_FREE;
 	LIST_INSERT_HEAD((&env_free_list), (e), env_link);
-	TAILQ_REMOVE(&env_sched_list, (e), env_sched_link);
+	if (was_runnable) {
+		TAILQ_REMOVE(&env_sched_list, (e), env_sched_link);
+	}
 }
 
 /* Overview:

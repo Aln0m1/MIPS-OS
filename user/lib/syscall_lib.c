@@ -1,5 +1,6 @@
 #include <env.h>
 #include <lib.h>
+#include <mfutex.h>
 #include <mmu.h>
 #include <syscall.h>
 #include <trap.h>
@@ -73,4 +74,25 @@ int syscall_write_dev(void *va, u_int dev, u_int size) {
 int syscall_read_dev(void *va, u_int dev, u_int size) {
 	/* Exercise 5.2: Your code here. (2/2) */
 	return msyscall(SYS_read_dev, va, dev, size);
+}
+
+int syscall_create_thread(void *(*entry_point)(void *), void *stack, void *arg) {
+	return msyscall(SYS_create_thread, entry_point, stack, arg);
+}
+
+int syscall_gettgid(void) {
+	return msyscall(SYS_gettgid);
+}
+
+void syscall_exit(int return_value) {
+	msyscall(SYS_exit, return_value);
+	user_panic("SYS_exit returned");
+}
+
+int syscall_wait(u_int envid, int *return_value_ptr) {
+	return msyscall(SYS_wait, envid, return_value_ptr);
+}
+
+int syscall_mfutex(uint32_t *uaddr, u_int op, uint32_t val) {
+	return msyscall(SYS_mfutex, uaddr, op, val);
 }
